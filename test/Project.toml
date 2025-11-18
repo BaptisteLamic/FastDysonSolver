@@ -1,0 +1,5 @@
+[deps]
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+SymbolicNumericIntegration = "78aadeae-fbc0-11eb-17b6-c7ec0477ba9e"
+TestItems = "1c621080-faea-4a02-84b6-bbd5e436b8fe"

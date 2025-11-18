@@ -1,0 +1,150 @@
+\documentclass[aps,prl,reprint,amsmath,amssymb,supplemental,onecolumn]{revtex4-2}
+\usepackage{amsfonts}
+\usepackage{dsfont}
+\usepackage{cleveref}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{url}
+\usepackage{color}
+
+\begin{document}
+	\title{\Large Supplemental material for: \\ \normalsize Solving the Transient Dyson Equation with Quasilinear Complexity via Matrix Compression}
+	\author{Baptiste LAMIC}
+	\affiliation{Univ. Grenoble Alpes, CEA, IRIG-Pheliqs, F-38000 Grenoble, France}
+	\date{\today}
+	
+	\maketitle
+	
+	\section{Expanded Description of the Key Equations}
+	
+	The objective of this section is to provide a more explicit and general formulation of the algorithm. For reader convenience, we reproduce some parts of the main text.
+	
+	\subsection{Problem Statement}
+	We present here an algorithm to solve the Dyson equation in the transient regime within the Keldysh non-equilibrium field theory, for a given self-energy $\Sigma$. In its real-time formulation, the Dyson equation reads
+	\begin{equation}
+		G(t,t') = g(t,t') + \iint_{-\infty}^{\infty} g(t,t_1)\, \Sigma(t_1,t_2)\, G(t_2,t')\,dt_1\,dt_2\,.
+		\label{eq:formal_dyson_equation}
+	\end{equation}
+	We select the Keldysh basis such that the kernels can be written as
+	\begin{equation}
+		G \equiv
+		\begin{pmatrix}
+			0 & G^{\text{A}} \\
+			G^{\text{R}} & G^{\text{K}}
+		\end{pmatrix}, \quad
+		\Sigma \equiv
+		\begin{pmatrix}
+			\Sigma^{\text{K}} & \Sigma^{\text{R}} \\
+			\Sigma^{\text{A}} & 0
+		\end{pmatrix},
+		\label{eq:basis:def}
+	\end{equation}
+	where the superscripts $\text{R}$, $\text{A}$, and $\text{K}$ denote the retarded, advanced, and kinetic components, as detailed in~\cite{Rammer2007}.
+	Equation~\ref{eq:formal_dyson_equation} can be rewritten as
+	\begin{align}
+		G^{\text{R}} &= g^{\text{R}} + g^{\text{R}}\Sigma^{\text{R}}G^{\text{R}}, \\
+		G^{\text{A}} &= (G^{\text{R}})^{\dagger}, \\
+		G^{\text{K}} &= \left(\mathds{1} + G^{\text{R}}\Sigma^{\text{R}}\right)g^{\text{K}}\left(\mathds{1} + \Sigma^{\text{A}} G^{\text{A}}\right) + G^{\text{R}}\Sigma^{\text{K}}G^{\text{A}}, \label{eq:kinetic_dyson}
+	\end{align}
+	where all integrations are implicit. The orbital degrees of freedom are assumed to be discretized so that for any two kernels $(F,R)$,
+	\begin{equation}
+		\left[F(t,t_1)R(t_1,t')\right]_{p,q} = \sum_{k=1}^{n_o} F_{p,k}(t,t_1) R_{k,q}(t_1, t'),
+	\end{equation}
+	where $p,q$ label orbitals and $n_o$ is the number of orbital degrees of freedom.
+	We further suppose the system is simulated from $t_0$ to $t_\text{end}$ and that the self-energy is supported only inside this domain; i.e., for all $(t,t') \notin [t_0, t_\text{end}]^2$, $\Sigma(t,t')^{R/A/K} = 0$. This restriction ensures that all integration domains lie inside $[t_0, t_\text{end}]$. The classical time stepping algorithm requires $\mathcal{O}(N^3)$ operations and $\mathcal{O}(N^2)$ space, with $N$ the number of time steps. By combining a compact discretization of the Dyson equation with matrix compression techniques, we reach $\mathcal{O}(N\log N)$ time and space complexity.
+	
+	\subsection{Algorithm}
+	
+	The algorithm relies on two main observations:
+	\begin{itemize}
+		\item Kernels can be efficiently compressed using hierarchical matrix formats such as HSS (Hierarchically Semi-Separable) or HODLR, greatly reducing memory and computational cost.
+		\item Kernel products arising from discretized Dyson equations can be recast as matrix operations compatible with these compressed representations, preserving efficiency end-to-end.
+	\end{itemize}
+	\subsubsection{Equation discretization}
+	The time axis is discretized into $N+1$ points on a uniform grid with step $\delta_t = (t_\text{end} - t_0)/N$. The $i$-th point is $t_i = t_0 + i\,\delta_t$. For integration, we introduce quadrature weights $w_{i,l,j}$  well-defined for $|i-j| > d$, with $d\in\mathbb{N}$, and, upon suitable redefinition, $w_{i,l,j} = 0$ whenever $l \notin \{i, \ldots, j\}$.
+	We require that the weights can be factorized as
+	\begin{equation}
+		w_{i,l,j} = a_{i,l}\,b_{l,j} + c_{i,l,j},
+	\end{equation}
+	subject to the existence of integer $n_w$ such that
+	\begin{equation}
+		|i-j| > 2 n_w \implies
+		\left\{
+		\begin{array}{l}
+			a_{i,j} = 1 \\
+			b_{i,j} = 1 \\
+			c_{i,l,j} = 0
+		\end{array}
+		\right. .
+	\end{equation}
+	This property is satisfied by any quadrature whose weights become constant far from the domain boundaries, for example, Gregory quadrature, including the trapezoidal rule with $d=0,\, n_w=1$.
+	Therefore, the product of two retarded kernels $A^R$ and $B^R$ can be approximated by a Nyström discretization for $i > j + d$:
+	\begin{align}
+		\left[ A^R B^R \right]_{p,q}(t_i, t_j)
+		&\equiv \sum_{k=1}^{n_o} \int_{t_j}^{t_i} A^R_{p,k}(t_i, t_1) B^R_{k,q}(t_1, t_j) dt_1 \\
+		&\approx \delta_t \sum_{k=1}^{n_o} \sum_{l=0}^N w_{i,l,j}\, A^R_{p,k}(t_i, t_l) B^R_{k,q}(t_l, t_j),
+	\end{align}
+	and the entries for $i \leq j + d$ are computed by other means.  Since there are only $\mathcal{O}(N)$ such elements, such elements and they are located near the diagonal, all of these entries can be evaluated in $\mathcal{O}(N)$ time.  Inserting the quadrature decomposition, we almost rewrite the kernel product as a matrix product
+	\begin{align}
+		\left[A^R B^R\right]_{p,q}(t_i, t_j) \approx
+		&\delta_t \sum_{k=1}^{n_o} \sum_{l=0}^N a_{i,l}\,A^R_{p,k}(t_i, t_l)\,b_{l,j} B^R_{k,q}(t_l, t_j) \\
+		&+ \delta_t \sum_{k=1}^{n_o} \sum_{l=j}^i c_{i,l,j} A^R_{p,k}(t_i, t_l) B^R_{k,q}(t_l, t_j).
+		\label{eq:first_factorisation}
+	\end{align}
+	This suggests defining the correction term   
+	\begin{equation}
+		\mathcal{C}[A^R, B^R]_{p,q}(t_i, t_j) \equiv \delta_t \sum_{k=1}^{n_o} \sum_{l = j}^{i} c_{i,l,j} A^R_{p,k}(t_i, t_l) B^R_{k,q}(t_l, t_j) +  \Pi_d(i-j) \left[A^R B^R\right]_{p,q}(t_i, t_j),
+	\end{equation}
+	where $\Pi_d(i-j) = 1$ if $|i-j| \le d$ and 0 otherwise. Only $\mathcal{O}(N)$ coefficients $c_{i,l,j}$, all located close to the diagonal, are nonzero, so $\mathcal{C}$ can be computed in $\mathcal{O}(N)$ time.
+	Thus for all $i, j \in \{1, \ldots, N\}$, the kernel product can be expressed as
+	\begin{equation}
+		\left[ A^R B^R \right]_{p,q}(t_i, t_j) \approx \delta_t \sum_{k=1}^{n_o} \sum_{l=0}^N a_{i,l} A^R_{p,k}(t_i, t_l)\, b_{l,j} B^R_{k,q}(t_l, t_j) + \mathcal{C}[A^R, B^R]_{p,q}(t_i, t_j).
+	\end{equation}
+	Equipped with this expression, we can reformulate the kernel product as a matrix product. 
+	\subsubsection{Matrix Notation.}
+	Let $\sigma: (p,i) \mapsto p + i\,n_o$ be the map from orbital and time indices to matrix indices. we define $\mathbf{A} \in \mathbb{C}^{n_o N \times n_o N}$ as
+	\begin{equation}
+		\mathbf{A}_{\sigma(p,i),\, \sigma(q,j)} \equiv A_{p,q}(t_i, t_j).
+	\end{equation}
+	We define the matrix form of $a$ and $b$ as
+	\begin{align}
+		\mathbf{a}_{\sigma(p,i), \sigma(q,j)} &= a_{i,j}, \\
+		\mathbf{b}_{\sigma(p,i), \sigma(q,j)} &= b_{i,j}.
+	\end{align}
+	And finally, we introduce the blockwise Hadamard product $\odot$ defined as
+	\begin{equation}
+		\left[\mathbf{A} \odot \mathbf{B}\right]_{\sigma(p,i),\,\sigma(q,j)} \equiv \sum_{k=1}^{n_o} \mathbf{A}_{\sigma(p,i),\,\sigma(k,j)}\, \mathbf{B}_{\sigma(k,i),\,\sigma(q,j)}.
+	\end{equation}
+	Combining all our ingredients, we obtain the compact expression 
+	\begin{equation}
+		[\mathbf{A}^R \mathbf{B}^R] = (\mathbf{a} \odot \mathbf{A}^R)\,(\mathbf{b} \odot \mathbf{B}^R) + \mathbf{C}[A^R, B^R].
+		\label{eq:kernel_product_as_matrix_product}
+	\end{equation}
+	The matrix $\mathbf{C}[A^R, B^R]$ is extremely sparse and can be evaluated cheaply using standard methods in $\mathcal{O}(N)$ operations, which is trivial when using trapezoidal quadrature. The blockwise Hadamard product is computed efficiently by exploiting that $a_{i,j}$ and $b_{i,j}$ deviate from unity only near the diagonal. Since matrices $\mathbf{A}$ and $\mathbf{B}$ are already in HSS format, the evaluation of \cref{eq:kernel_product_as_matrix_product} achieves overall $\mathcal{O}(N)$ complexity. We can now turn to solving the Dyson equation.
+	
+	\subsubsection{Application to the Dyson Equation.}
+	Let's use this discretization of the Kernel product to discretize the retarded Dyson equation. 
+	First we define $F^R \equiv g^R \Sigma^R$,
+	\begin{equation}
+		\mathbf{G}^R = \mathbf{g}^R + (\mathbf{a} \odot \mathbf{F}^R)\, (\mathbf{b} \odot \mathbf{G}^R) + \mathbf{C}[F^R, G^R].
+	\end{equation}
+	We regroup the terms,
+	\begin{equation}
+		(\mathbf{b} \odot \mathbf{G}^R) = \mathbf{g}^R + (\mathbf{a} \odot \mathbf{F}^R)\,(\mathbf{b} \odot \mathbf{G}^R) + \mathbf{C}[F^R, G^R] - ((\mathbf{1} - \mathbf{b}) \odot \mathbf{G}^R), 
+	\end{equation}
+	and define
+	\begin{equation}
+		\mathbf{S} \equiv \mathbf{C}[F^R, G^R] - ((\mathbf{1} - \mathbf{b}) \odot \mathbf{G}^R).
+	\end{equation}
+	By design, $\mathbf{S}$ is only nonzero near the diagonal, i.e., $\mathbf{S}_{\sigma(p,i),\,\sigma(q,j)} \ne 0 \implies |i-j| \le \max(2n_w, d)$. Consequently, $\mathbf{S}$ is efficiently computable in $\mathcal{O}(N)$ time.
+	The Dyson equation thus becomes
+	\begin{equation}
+		(\mathbf{b} \odot \mathbf{G}^R) = [\mathrm{Id} - (\mathbf{a} \odot \mathbf{F}^R)]^{-1} \left(\mathbf{g}^R + \mathbf{S}\right),
+	\end{equation}
+	with $\mathrm{Id}$ the identity. This equation can be solved efficiently in compressed format, yielding the retarded Green function throughout most of the domain and enabling evaluation of the full Green function over the complete domain in $\mathcal{O}(N)$ operations when starting from already compressed matrices. As discussed in the main text, the compression bottleneck is bypassed using stochastic compression methods, which preserves the quasi-linearity of the entire approach. 
+	For trapezoidal quadrature, these expressions reduce to those presented in the main text.
+		
+
+	
+	\bibliography{biblio}
+\end{document}

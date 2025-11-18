@@ -1,0 +1,138 @@
+\documentclass[aps,prl,reprint,amsmath,amssymb]{paper}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{dsfont}
+\usepackage{cleveref}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{url}
+
+\begin{document}
+	
+	\title{Solving the Nonlinear Dyson Equation}
+	
+	\author{Baptiste Lamic}
+	
+	\date{\today}
+	
+	\maketitle
+	
+	\section{Problem}
+	We solve the following Dyson-like equation:
+	\begin{equation}
+		G_i = g_i + g_i \Delta G_i, \quad \text{for } i \in \{1,2\},
+	\end{equation}
+	where the \emph{hybridization function} $\Delta$ is defined as:
+	\begin{equation}
+		\Delta(t,t') = J \frac{G_1(t,t') + G_2(t,t')}{2}.
+	\end{equation}
+	The \emph{free Green functions} correspond to the non-interacting Hamiltonians $h_1(t) = U(t)/2$ and $h_2(t) = -U(t)/2$, where $U(t)$ is a given function. The retarded free Green functions satisfy:
+	\begin{equation}
+		\frac{\text{d} g^R_i(t,t')}{\text{d} t} + i h_i(t) g^R_i(t,t') = -i \delta(t-t'). \label{eq:ode_free_Green_function}
+	\end{equation}
+	
+	In the real-time Keldysh formalism, we solve the following equations:
+	\begin{align}
+		G^\text{R} &= g^\text{R} + g^\text{R} \Delta^\text{R} G^\text{R}, \label{eq:retarded_dyson_equation} \\
+		G^\text{A} &= {G^\text{R}}^\dagger, \\
+		G^\text{K} &= (\mathds{1} + G^\text{R} \Delta^\text{R}) g^\text{K} (\mathds{1} + \Delta^\text{A} G^\text{A}) + G^\text{R} \Delta^\text{K} G^\text{A}, \label{eq:kinetic_dyson}
+	\end{align}
+	where
+	\begin{align}
+		\Delta^\text{R}(t,t') &= \frac{G_1^\text{R}(t,t') + G_2^\text{R}(t,t')}{2}, \\
+		\Delta^\text{K}(t,t') &= \frac{G_1^\text{K}(t,t') + G_2^\text{K}(t,t')}{2}.
+	\end{align}
+	
+	\section{Algorithm}
+	
+	\subsection{Discretization}
+	The kernels are discretized on a uniform time grid spanning from \( t = 0 \) to \( t_f \):
+	\begin{equation}
+		\mathbf{A}[p,q] \equiv A(t_p,t_q), \qquad \text{where} \quad t_p = p\delta_t.
+	\end{equation}
+	The number of time steps is given by \( N \equiv t_f / \delta_t \).
+	In the following, we consider the normalized Frobenius norm:
+	\begin{equation}
+		\| \cdot \| : A \mapsto \frac{1}{N} \sqrt{\sum_{p,q} \left(\mathbf{A}[p,q]\right)^2}.
+	\end{equation}
+	This norm can be efficiently evaluated using matrix operations on the compressed representation, leveraging the relation:
+	\begin{equation}
+		\| \mathbf{A} \| = \sqrt{\text{tr}(\mathbf{A}^\dagger \mathbf{A})} / N .
+	\end{equation}
+
+	
+	Integral operator are discritized by the Nystrom method using a trapezoidale quadrature. 
+	
+	\subsection{Construction of $g_i$ and $J$}
+	The operator $J$ is diagonal, making its construction trivial.
+	To compress the free Green functions efficient implementation of the following maps are required
+	\begin{align}
+		\mathbf{u} &\mapsto \sum_q g_i(t_p, t_q) u_q, \\
+		\mathbf{u} &\mapsto \sum_q g_i^\dagger(t_p, t_q) u_q, \\
+		(p,q) &\mapsto g_i(t_p, t_q).
+	\end{align}
+	
+	 From \Cref{eq:ode_free_Green_function}, we deduce:
+	\begin{equation}
+		g_i^R(t,t') = \Theta(t-t') g_i^R(t,0) g_i^R(t',0)^{-1}, \label{eq:gr_naive_factorisation}
+	\end{equation}
+	where $\Theta$ is the Heaviside function. Hence, the maps can be realized by solving $g_i^R(t,0)$ with a classical ODE solver and leveraging the low-rank structure of $g_i^R$.
+	
+	\subsubsection{Dealing with relaxation in  $g^R$}
+	Even in presence of relaxation, one expects $\| g^R(t>0, 0) \| > 0$ . Yet, simple relaxation models lead to $\log\left(\| g^R(t>0, 0) \| \right) \propto -t$. Hence, when doing the computation in finite precision arithmetic \cref{eq:gr_naive_factorisation} quickly become useless. A very direct approach to bypass this issue would be to discretize the differential operator directly, and then inverse it.  
+	
+	\subsection{Parmeters}
+	We set :
+	\begin{equation}
+		U(t) = \alpha \sin(2 t) \exp(-t/\tau) (1-\exp(-t/4\tau))
+	\end{equation}
+	\begin{equation}
+		J = 1
+	\end{equation}
+	
+	\subsection{Iteration Method}
+	We iteratively compute:
+	\begin{align}
+		G_{i,j+1} &= g_i + g_i \Delta_j G_{i,j+1}, \\
+		\Delta_j &= \frac{G_{1,j} + G_{2,j}}{2}.
+	\end{align}
+	
+	\subsection{Convergence Monitoring}
+	We define the norm of the discretized kernel $A(t_p, t_q)$ with $t_{i,p}$
+	Convergence is monitored using the following error measures:
+	\begin{align}
+		\mathcal{E}_{j,\text{abs}} &\equiv \sqrt{\| G^R_{1,j+1} - G^R_{1,j} \|^2 + \| G^R_{2,j+1} - G^R_{2,j} \|^2}, \\
+		\mathcal{E}_{j,\text{rel}} &\equiv \frac{ \mathcal{E}_{j,\text{abs}}}{\sqrt{\| G^R_{1,j+1} \|^2 + \| G^R_{2,j+1} \|^2}},
+	\end{align}
+	
+	\subsection{Stopping Criterion}
+	The iteration stops when:
+	\begin{itemize}
+		\item The number of iterations exceeds the preset maximum.
+		\item $\mathcal{E}_{j,\text{rel}}$ plateaus.
+		\item The target accuracy is reached
+	\end{itemize}
+	
+	\section{Results}
+	\begin{figure}[h]
+		\centering
+		\includegraphics[width=0.9\columnwidth]{../plots/FK_benchmark_hss_vs_full.pdf}
+		\caption{
+			Convergence toward self-consistent solution for different propagation times $t_f$. 
+			The compression accuracy is maintained at its nominal value throughout the computation. 
+			\emph{a:} Real and imaginary part of $g^R_1$ 
+			\emph{b:} Real and imaginary part of $g^R_2$ 
+			\emph{c:} Evolution of relative difference between successive iterations. 
+			\emph{d:} Number of iterations required to reach desired accuracy. 
+			\emph{Parameters:} $\alpha = 20, \tau = 5$ and $\delta_t = 0.1$. 
+			Compression: $rtol_{\text{nominal}} = 10^{-8}$ and $atol_{\text{nominal}} = 10^{-9}$
+		}
+	\end{figure}
+	
+	
+	\newpage
+	\bibliographystyle{apsrev4-1}
+	\bibliography{biblio}
+	
+\end{document}
