@@ -1,7 +1,10 @@
 # FastDysonSolver
 
 **FastDysonSolver** is a reproducible scientific project implemented in the [Julia Language](https://julialang.org/) and structured with [DrWatson.jl](https://juliadynamics.github.io/DrWatson.jl/stable/). This repository accompanies the research paper [Solving the Transient Dyson Equation with Quasilinear Complexity via Matrix Compression](https://doi.org/10.1103/q222-w14m) by *Baptiste Lamic*
-This repository contains the code required to *reproduce the figures* presented in the manuscript. The *core solver* is archived on *Zenodo* [https://zenodo.org/badge/DOI/10.5281/zenodo.17560811.svg](https://doi.org/10.5281/zenodo.17560811) and the source code is hosted on GitHub [github](https://github.com/BaptisteLamic/NonEquilibriumGreenFunction.jl/tree/0.2.5). 
+This repository contains the code required to *reproduce the figures* presented in the manuscript. The *core solver* is archived on *Zenodo* [https://zenodo.org/badge/DOI/10.5281/zenodo.17560811.svg](https://doi.org/10.5281/zenodo.17560811) and the source code is hosted on GitHub [github](https://github.com/BaptisteLamic/NonEquilibriumGreenFunction.jl).
+
+> [!NOTE]
+> The code base has been updated since the publication and no longer matches the exact listing of the manuscript: it implements the **same algorithm**, but relies on the improved and refactored API of [NonEquilibriumGreenFunction.jl](https://github.com/BaptisteLamic/NonEquilibriumGreenFunction.jl) **v0.3** (typed kernel maps, an explicit compression interface, and quadrature-aware discretization). The scientific content and the numerical results are unchanged. 
 
 
 ## Getting Started
@@ -29,7 +32,7 @@ This ensures the project is activated and paths are handled correctly.
 
 All figures from the paper can be generated using the provided Jupyter notebooks:
 
-- [SQDS_junction_benchmarks.ipynb](notebooks/SQDS_junction_final.ipynb)
+- [SQDS_junction_benchmarks.ipynb](notebooks/SQDS_junction_benchmarks.ipynb)
 - [SQDS_junction_evaluate_steady_state.ipynb](notebooks/SQDS_junction_evaluate_steady_state.ipynb)
 
 The original computations were performed on an Intel CPU Ultra 265k with 48 GB RAM. However, with appropriate parameter tuning, most calculations can be reproduced with 16 GB RAM.
