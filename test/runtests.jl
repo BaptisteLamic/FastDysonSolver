@@ -1,11 +1,15 @@
 using DrWatson, Test
-@quickactivate "FastDysonSolver"
+# This repo is a DrWatson script project (no src/FastDysonSolver.jl module):
+# activate the parent project explicitly, since @quickactivate from test/
+# would find the nameless test project instead.
+using Pkg
+Pkg.activate(dirname(@__DIR__))
 
 # Here you include files using `srcdir`
 # include(srcdir("file.jl"))
 
 # Run test suite
-includet("./../src/Junction.jl")
+include(joinpath(@__DIR__, "..", "src", "Junction.jl"))
 
 println("Starting tests")
 ti = time()

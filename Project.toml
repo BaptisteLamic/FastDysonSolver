@@ -1,4 +1,5 @@
 name = "FastDysonSolver"
+uuid = "a80ea1cf-4be0-4938-af4f-d785e83c0a2e"
 authors = ["BaptisteLamic"]
 
 [deps]
