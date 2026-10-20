@@ -134,10 +134,12 @@ end
 
 
 
-function compute_average_current(results)
-    #First we build the expression
-    function f(G_R,G_K,Σ_R,Σ_K)
-        _Σ_R_time_G_R = Threads.@spawn Σ_R*G_R
+# Thread-budget facility from the NonEquilibriumGreenFunction backend rework
+# (PR 54); absent on the legacy 0.2 series, so guard the call.
+const _HAS_THREAD_BUDGET = isdefined(NonEquilibriumGreenFunction, :with_thread_budget)
+
+function _current_products(G_R,G_K,Σ_R,Σ_K)
+    _Σ_R_time_G_R = Threads.@spawn Σ_R*G_R
         _G_R_time_Σ_R = Threads.@spawn G_R*Σ_R
         _G_R_time_Σ_K = Threads.@spawn G_R*Σ_K  
         _G_K_time_adjoint_Σ_R = Threads.@spawn G_K*adjoint(Σ_R)
@@ -153,7 +155,17 @@ function compute_average_current(results)
         
         return -((1//2)*((adjoint(Σ_R_time_G_R)) - Σ_R_time_G_R) + G_R_time_Σ_K + G_K_time_adjoint_Σ_R + -(Σ_K_time_adjoint_G_R + Σ_R_time_G_K) + (3//2)*(G_R_time_Σ_R  - adjoint(G_R_time_Σ_R )))
     end
-    I_avr_op = f(results[:G_R], results[:G_K], results[:Σ_R_left], results[:Σ_K_left])
+    # The six kernel products run as concurrent tasks over disjoint lazy
+    # trees; under a shared thread budget each product's DAG evaluation caps
+    # itself at the ambient budget (PR 54 semantics). On the legacy 0.2
+    # series this degrades to the plain fan-out.
+    if _HAS_THREAD_BUDGET
+        I_avr_op = with_thread_budget(Threads.nthreads()) do
+            _current_products(results[:G_R], results[:G_K], results[:Σ_R_left], results[:Σ_K_left])
+        end
+    else
+        I_avr_op = _current_products(results[:G_R], results[:G_K], results[:Σ_R_left], results[:Σ_K_left])
+    end
     #We have to take the trace on the Keldysh space by hand. 
     dg = diag(matrix(I_avr_op))
     (dg[1:2:end] .- dg[2:2:end])
