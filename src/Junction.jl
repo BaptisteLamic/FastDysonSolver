@@ -3,7 +3,6 @@ using BenchmarkTools
 using LinearAlgebra
 using HssMatrices
 using NonEquilibriumGreenFunction
-using NonEquilibriumGreenFunction: Kernels.materialize
 using StaticArrays
 
 using CairoMakie
@@ -97,9 +96,9 @@ function compute_GR(p::JunctionParameters;cpr)
     Σ_R = Σ_R_left + Σ_R_right
     apodization_function = get_apodization_function(p)
     g = RetardedKernel(axis(p), Stationary(τ -> ComplexF64(-1im)*exp(-1im * σz() * 0 * τ) * apodization_function(τ, 0.0)), compression=cpr)
-    # Kernel products are lazy DAG nodes on the PR 54 branch; solve_dyson
-    # requires a concrete Kernel, so force the materialization here.
-    G_R = solve_dyson(g, materialize(g * Σ_R))
+    # solve_dyson materializes lazy DAG operands itself (PR 54 head d23bfd4),
+    # so the lazy product can be passed directly.
+    G_R = solve_dyson(g, g * Σ_R)
     return (; g_R_lead,  g, G_R, Σ_R_left, Σ_R_right, Σ_R, coupling_left, coupling_right)
 end
 
@@ -137,40 +136,24 @@ end
 
 
 
-# Thread-budget facility from the NonEquilibriumGreenFunction backend rework
-# (PR 54); absent on the legacy 0.2 series, so guard the call.
-const _HAS_THREAD_BUDGET = isdefined(NonEquilibriumGreenFunction, :with_thread_budget)
-
-function _current_products(G_R,G_K,Σ_R,Σ_K)
-    _Σ_R_time_G_R = Threads.@spawn Σ_R*G_R
-        _G_R_time_Σ_R = Threads.@spawn G_R*Σ_R
-        _G_R_time_Σ_K = Threads.@spawn G_R*Σ_K  
-        _G_K_time_adjoint_Σ_R = Threads.@spawn G_K*adjoint(Σ_R)
-        _Σ_K_time_adjoint_G_R = Threads.@spawn Σ_K*adjoint(G_R)
-        _Σ_R_time_G_K = Threads.@spawn Σ_R*G_K
-
-        Σ_R_time_G_R = fetch(_Σ_R_time_G_R)
-        G_R_time_Σ_R = fetch(_G_R_time_Σ_R)
-        G_R_time_Σ_K = fetch(_G_R_time_Σ_K)
-        G_K_time_adjoint_Σ_R = fetch(_G_K_time_adjoint_Σ_R)
-        Σ_K_time_adjoint_G_R = fetch(_Σ_K_time_adjoint_G_R)
-        Σ_R_time_G_K = fetch(_Σ_R_time_G_K)
-        
-        return -((1//2)*((adjoint(Σ_R_time_G_R)) - Σ_R_time_G_R) + G_R_time_Σ_K + G_K_time_adjoint_Σ_R + -(Σ_K_time_adjoint_G_R + Σ_R_time_G_K) + (3//2)*(G_R_time_Σ_R  - adjoint(G_R_time_Σ_R )))
+# The average current as ONE lazy kernel-level DAG node: products, sums,
+# adjoints and scalings are all lazy constructs, so the whole observable is
+# a single tree that materializes at one forcing point (`matrix`). The
+# backend then evaluates the lowered graph — CSE extracts the shared
+# subgraphs (Σ_R G_R, G_R Σ_R, ...) and a fused/parallel `evaluate`
+# override can schedule the whole computation (the HSS backend already
+# evaluates product chains in balanced order). No manual task fan-out:
+# concurrency belongs to the backend, capped by the ambient thread budget.
+function current_operator(G_R, G_K, Σ_R, Σ_K)
+    Σ_R_time_G_R = Σ_R * G_R
+    G_R_time_Σ_R = G_R * Σ_R
+    return -((1//2)*((adjoint(Σ_R_time_G_R)) - Σ_R_time_G_R) + G_R*Σ_K + G_K*adjoint(Σ_R) +
+             -(Σ_K*adjoint(G_R) + Σ_R*G_K) +
+             (3//2)*(G_R_time_Σ_R - adjoint(G_R_time_Σ_R)))
 end
 
 function compute_average_current(results)
-    # The six kernel products run as concurrent tasks over disjoint lazy
-    # trees; under a shared thread budget each product's DAG evaluation caps
-    # itself at the ambient budget (PR 54 semantics). On the legacy 0.2
-    # series this degrades to the plain fan-out.
-    if _HAS_THREAD_BUDGET
-        I_avr_op = with_thread_budget(Threads.nthreads()) do
-            _current_products(results[:G_R], results[:G_K], results[:Σ_R_left], results[:Σ_K_left])
-        end
-    else
-        I_avr_op = _current_products(results[:G_R], results[:G_K], results[:Σ_R_left], results[:Σ_K_left])
-    end
+    I_avr_op = current_operator(results[:G_R], results[:G_K], results[:Σ_R_left], results[:Σ_K_left])
     #We have to take the trace on the Keldysh space by hand. 
     dg = diag(matrix(I_avr_op))
     (dg[1:2:end] .- dg[2:2:end])
