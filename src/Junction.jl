@@ -3,6 +3,7 @@ using BenchmarkTools
 using LinearAlgebra
 using HssMatrices
 using NonEquilibriumGreenFunction
+using NonEquilibriumGreenFunction: Kernels.materialize
 using StaticArrays
 
 using CairoMakie
@@ -78,10 +79,10 @@ function _evaluate_apodization_time_constante(ε_τ,τ,n)
 end
 
 function compute_retarded_lead_green_function(p::JunctionParameters; cpr)
-    g_R_lead_delta = discretize_dirac(axis(p), t -> -1im* pi * σ0(), compression=cpr)
-    g_R_lead_continuous = discretize_retardedkernel(axis(p),
-        (t, tp) ->  pi*(p.Δ * besselj0(p.Δ*(t-tp)) * σx()+ 1im * p.Δ * besselj1(p.Δ*(t-tp)) * σ0()),
-        compression=cpr, stationary=true)
+    g_R_lead_delta = LocalKernel(axis(p), t -> -1im* pi * σ0(), compression=cpr)
+    g_R_lead_continuous = RetardedKernel(axis(p),
+        Stationary(τ ->  pi*(p.Δ * besselj0(p.Δ*τ) * σx()+ 1im * p.Δ * besselj1(p.Δ*τ) * σ0())),
+        compression=cpr)
     g_lead = g_R_lead_delta + g_R_lead_continuous
     return g_lead
 end
@@ -89,14 +90,16 @@ end
  
 function compute_GR(p::JunctionParameters;cpr)
     g_R_lead = compute_retarded_lead_green_function(p::JunctionParameters; cpr=cpr)
-    coupling_left = discretize_dirac(axis(p), t ->  sqrt(p.Γl/pi) * exp(1im * σz() * p.ϕl(t) / 2) * σz(), compression=cpr)
-    coupling_right = discretize_dirac(axis(p), t -> sqrt(p.Γr/pi) * exp(1im* σz() * p.ϕr(t) / 2) * σz(), compression=cpr)
+    coupling_left = LocalKernel(axis(p), t ->  sqrt(p.Γl/pi) * exp(1im * σz() * p.ϕl(t) / 2) * σz(), compression=cpr)
+    coupling_right = LocalKernel(axis(p), t -> sqrt(p.Γr/pi) * exp(1im* σz() * p.ϕr(t) / 2) * σz(), compression=cpr)
     Σ_R_left = coupling_left' * g_R_lead * coupling_left
     Σ_R_right = coupling_right' * g_R_lead * coupling_right
     Σ_R = Σ_R_left + Σ_R_right
     apodization_function = get_apodization_function(p)
-    g = discretize_retardedkernel(axis(p), (t, tp) -> ComplexF64(-1im)*exp(-1im * σz() * 0 * (t-tp)) * apodization_function(t, tp), compression=cpr, stationary=true)
-    G_R = solve_dyson(g, g * Σ_R)
+    g = RetardedKernel(axis(p), Stationary(τ -> ComplexF64(-1im)*exp(-1im * σz() * 0 * τ) * apodization_function(τ, 0.0)), compression=cpr)
+    # Kernel products are lazy DAG nodes on the PR 54 branch; solve_dyson
+    # requires a concrete Kernel, so force the materialization here.
+    G_R = solve_dyson(g, materialize(g * Σ_R))
     return (; g_R_lead,  g, G_R, Σ_R_left, Σ_R_right, Σ_R, coupling_left, coupling_right)
 end
 
@@ -106,8 +109,8 @@ function simulate_junction(p::JunctionParameters; cpr = default_compression() )
     coupling_left = results_GR[:coupling_left]
     coupling_right = results_GR[:coupling_right]
     G_R = results_GR[:G_R]
-    ρ = discretize_acausalkernel(axis(p), (t, tp) -> thermal_kernel(t - tp, p.β) * σ0() .|> ComplexF64,
-    stationary=true, compression=cpr)
+    ρ = AcausalKernel(axis(p), Stationary(τ -> thermal_kernel(τ, p.β) * σ0() .|> ComplexF64),
+    compression=cpr)
     g_lead_kinetic = g_R_lead *  ρ  - ρ * g_R_lead'
 
     Σ_K_left =  compress!(coupling_left' * g_lead_kinetic * coupling_left)
@@ -123,8 +126,8 @@ function simulate_thermal_equilibrium_junction(p::JunctionParameters; cpr = defa
     coupling_left = results_GR[:coupling_left]
     coupling_right = results_GR[:coupling_right]
     G_R = results_GR[:G_R]
-    ρ = discretize_acausalkernel(axis(p), (t, tp) -> thermal_kernel(t - tp, p.β) * σ0() .|> ComplexF64,
-    stationary=true, compression=cpr)
+    ρ = AcausalKernel(axis(p), Stationary(τ -> thermal_kernel(τ, p.β) * σ0() .|> ComplexF64),
+    compression=cpr)
     g_lead_kinetic = g_R_lead *  ρ  - ρ * g_R_lead'
     Σ_K_left =  compress!(coupling_left' * g_lead_kinetic * coupling_left)
     Σ_K_right = compress!(coupling_right' * g_lead_kinetic * coupling_right)
@@ -134,10 +137,12 @@ end
 
 
 
-function compute_average_current(results)
-    #First we build the expression
-    function f(G_R,G_K,Σ_R,Σ_K)
-        _Σ_R_time_G_R = Threads.@spawn Σ_R*G_R
+# Thread-budget facility from the NonEquilibriumGreenFunction backend rework
+# (PR 54); absent on the legacy 0.2 series, so guard the call.
+const _HAS_THREAD_BUDGET = isdefined(NonEquilibriumGreenFunction, :with_thread_budget)
+
+function _current_products(G_R,G_K,Σ_R,Σ_K)
+    _Σ_R_time_G_R = Threads.@spawn Σ_R*G_R
         _G_R_time_Σ_R = Threads.@spawn G_R*Σ_R
         _G_R_time_Σ_K = Threads.@spawn G_R*Σ_K  
         _G_K_time_adjoint_Σ_R = Threads.@spawn G_K*adjoint(Σ_R)
@@ -152,8 +157,20 @@ function compute_average_current(results)
         Σ_R_time_G_K = fetch(_Σ_R_time_G_K)
         
         return -((1//2)*((adjoint(Σ_R_time_G_R)) - Σ_R_time_G_R) + G_R_time_Σ_K + G_K_time_adjoint_Σ_R + -(Σ_K_time_adjoint_G_R + Σ_R_time_G_K) + (3//2)*(G_R_time_Σ_R  - adjoint(G_R_time_Σ_R )))
+end
+
+function compute_average_current(results)
+    # The six kernel products run as concurrent tasks over disjoint lazy
+    # trees; under a shared thread budget each product's DAG evaluation caps
+    # itself at the ambient budget (PR 54 semantics). On the legacy 0.2
+    # series this degrades to the plain fan-out.
+    if _HAS_THREAD_BUDGET
+        I_avr_op = with_thread_budget(Threads.nthreads()) do
+            _current_products(results[:G_R], results[:G_K], results[:Σ_R_left], results[:Σ_K_left])
+        end
+    else
+        I_avr_op = _current_products(results[:G_R], results[:G_K], results[:Σ_R_left], results[:Σ_K_left])
     end
-    I_avr_op = f(results[:G_R], results[:G_K], results[:Σ_R_left], results[:Σ_K_left])
     #We have to take the trace on the Keldysh space by hand. 
     dg = diag(matrix(I_avr_op))
     (dg[1:2:end] .- dg[2:2:end])
